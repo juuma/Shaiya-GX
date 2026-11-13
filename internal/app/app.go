@@ -130,6 +130,8 @@ type App struct {
 	frameWidth, frameHeight             int
 	worlds                              map[string]*scene.World
 	skinner                             *render.Skinner
+	sunShadow                           *render.SunShadow
+	sunShadowFailed, sunCapturing       bool
 	items                               map[sdata.ItemKey]*sdata.Item
 	mallCatalog                         []sdata.CashProduct
 	blessingMax                         [2]uint32

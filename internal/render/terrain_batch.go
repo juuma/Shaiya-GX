@@ -37,7 +37,7 @@ func (s *Scene3D) SetTerrainRanges(ranges []TerrainRange) {
 }
 
 func (s *Scene3D) DrawTerrainRanges(m *Mesh, mask, tile, lightmap *Texture, tileSize float32, first bool, count int) {
-	if m == nil || m.Count == 0 || count == 0 {
+	if m == nil || m.Count == 0 || count == 0 || s.SkipTerrain {
 		return
 	}
 	s.terrainLayerState(mask, tile, lightmap, tileSize, first)
@@ -51,7 +51,7 @@ func (s *Scene3D) DrawTerrainRanges(m *Mesh, mask, tile, lightmap *Texture, tile
 // DrawTerrainRange is also used to compare grouped rendering against the
 // original per-cell traversal.
 func (s *Scene3D) DrawTerrainRange(m *Mesh, mask, tile, lightmap *Texture, tileSize float32, first bool, r TerrainRange) {
-	if m == nil || r.Count == 0 {
+	if m == nil || r.Count == 0 || s.SkipTerrain {
 		return
 	}
 	s.terrainLayerState(mask, tile, lightmap, tileSize, first)

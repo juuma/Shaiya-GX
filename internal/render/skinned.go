@@ -36,6 +36,7 @@ out vec2 vUV2;
 out float vDiffuse;
 out float vDepth;
 out vec4 vEffectColor;
+out vec3 vWorldPos;
 void main() {
 	vEffectColor = vec4(1.0);
 	vec4 p = vec4(pos, 1.0);
@@ -55,7 +56,9 @@ void main() {
 	}
 	vec4 local = vec4(p.xyz, 1.0);
 	gl_Position = worldViewProj * local;
-	gl_ClipDistance[0] = dot(world * local, clipPlane);
+	vec4 worldPos = world * local;
+	vWorldPos = worldPos.xyz;
+	gl_ClipDistance[0] = dot(worldPos, clipPlane);
 	vDepth = (worldView * local).z;
 	vUV = uv; vUV2 = vec2(0.0);
 	n = normalize((world * vec4(n, 0.0)).xyz);
@@ -117,6 +120,7 @@ type Skinner struct {
 	uMode, uRef, uFogColor, uFogRange                  int32
 	uDetailBias                                        int32
 	uClipPlane                                         int32
+	sun                                                sunUniforms
 }
 
 func NewSkinner() (*Skinner, error) {
@@ -129,7 +133,7 @@ func NewSkinner() (*Skinner, error) {
 	gl.CreateBuffers(1, &palette)
 	gl.NamedBufferStorage(palette, MaxBones*64, nil, gl.DYNAMIC_STORAGE_BIT)
 	addGPUBytes(MaxBones * 64)
-	return &Skinner{prog: p, palette: palette, uBoneCount: u("boneCount"), uWorld: u("world"), uViewProj: u("worldViewProj"), uView: u("worldView"),
+	return &Skinner{prog: p, palette: palette, sun: lookupSunUniforms(p), uBoneCount: u("boneCount"), uWorld: u("world"), uViewProj: u("worldViewProj"), uView: u("worldView"),
 		uLight: u("lightDir"), uAmb: u("ambient"), uMode: u("mode"), uRef: u("alphaRef"),
 		uDetailBias: u("detailBias"), uFogColor: u("fogColor"), uFogRange: u("fogRange"), uClipPlane: u("clipPlane")}, nil
 }
@@ -150,6 +154,7 @@ func (k *Skinner) Begin(s *Scene3D, ambient float32) {
 	if s.Shadow {
 		gl.Uniform1i(k.uMode, 7)
 	}
+	k.sun.upload(s)
 }
 
 // SetPose uploads the per-bone skin matrices (B*F, row-vector).

@@ -26,6 +26,7 @@ func (a *App) Close() {
 		w.Close()
 	}
 	a.skinner.Delete()
+	a.sunShadow.Delete()
 	if a.frameTarget != nil {
 		a.frameTarget.Delete()
 	}

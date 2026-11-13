@@ -29,13 +29,16 @@ out vec2 vUV2;
 out float vDiffuse;
 out float vDepth;
 out vec4 vEffectColor;
+out vec3 vWorldPos;
 void main() {
 	vec4 local = vec4(pos, 1.0);
 	mat4 wm = instanced != 0 ? instanceWorld : world;
 	mat4 mv = instanced != 0 ? instanceWorldView : worldView;
 	mat4 mvp = instanced != 0 ? instanceWorldViewProj : worldViewProj;
 	gl_Position = mvp * local;
-	gl_ClipDistance[0] = dot(wm * local, clipPlane);
+	vec4 worldPos = wm * local;
+	vWorldPos = worldPos.xyz;
+	gl_ClipDistance[0] = dot(worldPos, clipPlane);
 	vDepth = (mv * local).z;
 	vUV = uv; vUV2 = uv2;
 	vEffectColor = effectColorsEnabled != 0 ? colors[gl_InstanceID] : vec4(1.0);
@@ -68,12 +71,33 @@ uniform vec4 waterViewport;
 uniform int hasWaterNormals;
 uniform int waterBelow;
 uniform float waterTime;
+layout(binding=7) uniform sampler2DShadow sunShadow;
+uniform int sunShadowOn;
+uniform mat4 sunShadowMatrix;
+uniform vec4 sunShadowArea;   // centre xyz, radius
+uniform vec4 sunShadowParams; // strength, bias, texel size
 in vec2 vUV;
 in vec2 vUV2;
 in float vDiffuse;
 in float vDepth;
 in vec4 vEffectColor;
+in vec3 vWorldPos;
 out vec4 frag;
+// Real-time sun shadow: 3x3 hardware PCF, faded out at the covered area's edge.
+float sunLight() {
+	if (sunShadowOn == 0) return 1.0;
+	vec4 p = sunShadowMatrix * vec4(vWorldPos, 1.0);
+	vec3 uvz = vec3(p.xy * 0.5 + 0.5, p.z - sunShadowParams.y);
+	if (uvz.z >= 1.0) return 1.0;
+	float lit = 0.0;
+	for (int y = -1; y <= 1; y++)
+		for (int x = -1; x <= 1; x++)
+			lit += texture(sunShadow, vec3(uvz.xy + vec2(x, y) * sunShadowParams.z, uvz.z));
+	float shadow = 1.0 - lit / 9.0;
+	float edge = length(vWorldPos.xz - sunShadowArea.xz) / sunShadowArea.w;
+	shadow *= 1.0 - smoothstep(0.75, 1.0, edge);
+	return 1.0 - sunShadowParams.x * shadow;
+}
 void main() {
 	vec4 c;
 	if (mode == 7) {
@@ -115,9 +139,10 @@ void main() {
 	} else if (mode == 1) {
 		c = vec4(texture(tex1, vUV2 / tileSize, detailBias).rgb, texture(tex0, vUV, detailBias).a);
 		if (hasTerrainLight != 0) c.rgb *= texture(terrainLight, vUV).rgb;
+		c.rgb *= sunLight();
 	} else if (mode == 4) {
 		c = texture(tex0, vUV, detailBias);
-		c.rgb *= texture(tex1, vUV2, detailBias).rgb;
+		c.rgb *= texture(tex1, vUV2, detailBias).rgb * sunLight();
 	} else if (mode == 3) {
 		frag = texture(tex0, vUV + uvOffset) * tint * vEffectColor;
 		return;
@@ -126,7 +151,7 @@ void main() {
 		return;
 	} else {
 		c = texture(tex0, vUV, detailBias);
-		c.rgb *= vDiffuse;
+		c.rgb *= vDiffuse * sunLight();
 	}
 	if (c.a <= alphaRef) discard;
 	if (fogRange.y > fogRange.x) {
@@ -138,6 +163,12 @@ void main() {
 
 // Scene3D holds the shared 3D program and per-frame camera state.
 type Scene3D struct {
+	// SunShadow, when set, darkens receivers with the real-time sun map.
+	SunShadow *SunShadow
+	// SkipTerrain omits terrain passes (sun shadow casters exclude the ground).
+	SkipTerrain bool
+	sun         sunUniforms
+
 	StaticObjectLOD                                           bool
 	ViewportW, ViewportH                                      int
 	uniformWorld, uniformView, uniformVP                      M4
@@ -193,7 +224,7 @@ func NewScene3D() (*Scene3D, error) {
 		return nil, err
 	}
 	u := func(n string) int32 { return gl.GetUniformLocation(p, gl.Str(n+"\x00")) }
-	return &Scene3D{prog: p, uInstanced: u("instanced"), uEffectColors: u("effectColorsEnabled"), uTerrainLight: u("hasTerrainLight"), uWorld: u("world"), uViewProj: u("worldViewProj"), uView: u("worldView"), uLight: u("lightDir"),
+	return &Scene3D{prog: p, sun: lookupSunUniforms(p), uInstanced: u("instanced"), uEffectColors: u("effectColorsEnabled"), uTerrainLight: u("hasTerrainLight"), uWorld: u("world"), uViewProj: u("worldViewProj"), uView: u("worldView"), uLight: u("lightDir"),
 		uDetailBias: u("detailBias"), uAmb: u("ambient"), uLit: u("lit"), uMode: u("mode"), uRef: u("alphaRef"), uFogColor: u("fogColor"), uFogRange: u("fogRange"), uTile: u("tileSize"), uTint: u("tint"), uUVOff: u("uvOffset"), uClipPlane: u("clipPlane"), uWaterReflection: u("hasWaterReflection"), uWaterViewport: u("waterViewport"), uWaterNormals: u("hasWaterNormals"), uWaterTime: u("waterTime"), uWaterBelow: u("waterBelow"),
 		LightDir: V3{-1, -1, -1}, Ambient: 128.0 / 255}, nil
 }
@@ -220,6 +251,7 @@ func (s *Scene3D) Begin() {
 	gl.Uniform3f(s.uFogColor, s.FogColor[0], s.FogColor[1], s.FogColor[2])
 	gl.Uniform2f(s.uFogRange, s.FogStart, s.FogEnd)
 	gl.Uniform1f(s.uDetailBias, s.DetailBias)
+	s.sun.upload(s)
 }
 
 // End restores the 2D state.
@@ -305,6 +337,9 @@ func (s *Scene3D) DrawModel(m *Mesh, t *Texture, world M4, alphaRef float32, ble
 
 // DrawTerrainLayer draws one layer pass: first opaque, later alpha-blended.
 func (s *Scene3D) DrawTerrainLayer(m *Mesh, mask, tile, lightmap *Texture, tileSize float32, first bool) {
+	if s.SkipTerrain {
+		return
+	}
 	s.terrainLayerState(mask, tile, lightmap, tileSize, first)
 	m.Draw()
 }
@@ -333,6 +368,9 @@ func (s *Scene3D) terrainLayerState(mask, tile, lightmap *Texture, tileSize floa
 
 // DrawLightmap multiplies the frame by the terrain lightmap.
 func (s *Scene3D) DrawLightmap(m *Mesh, lm *Texture) {
+	if s.SkipTerrain {
+		return
+	}
 	id := Identity()
 	s.setWorld(id)
 	gl.Uniform1i(s.uMode, 2)

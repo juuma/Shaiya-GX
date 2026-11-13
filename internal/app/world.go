@@ -585,6 +585,10 @@ func (a *App) drawWorldView(w, h int) {
 	if v.effect != nil {
 		v.effect.Update(float32(a.frameDT))
 	}
+	s.SunShadow = nil
+	if a.clientSettings().Shadows && v.world.HasTerrain() && !underwater {
+		a.renderSunShadow()
+	}
 	s.WaterReflection = nil
 	waterVisible := a.clientSettings().Water && (underwater || eye[1] > 0) && v.world.WaterVisible(s.View, s.Proj)
 	if waterVisible {
@@ -646,6 +650,7 @@ func (a *App) drawWorldView(w, h int) {
 	v.world.RenderMapEffects(s)
 	s.WaterReflection = nil
 	s.WaterBelow = false
+	s.SunShadow = nil
 	s.End()
 }
 

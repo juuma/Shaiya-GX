@@ -199,3 +199,7 @@ previous colour-write mask is restored afterward. Shadow silhouette targets
 still write their own alpha coverage and restore the enclosing scene mask.
 Regression checks exercise the real Dispel EFT, translucent layering, nested
 shadow captures and the water option in a rendered map.
+
+## Real-time sun shadows
+
+On fields, **Shadow Effect** renders a 2048×2048 orthographic depth map from the scene light every frame, covering 45 units around the player and snapped to whole texels so edges do not shimmer while moving. World objects and actors cast shadows; terrain, sky and effects do not. Terrain, objects and actors receive them through 3×3 hardware PCF, faded out toward the edge of the covered area, darkening by 45% so the baked lightmaps still read correctly. While the sun map is active the legacy projected actor silhouettes are skipped; dungeons have no sun and keep the legacy silhouettes.
